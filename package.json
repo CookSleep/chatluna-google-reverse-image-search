@@ -1,0 +1,95 @@
+{
+    "name": "koishi-plugin-chatluna-google-reverse-image-search",
+    "description": "为 ChatLuna 提供 Reverse Image Search（以图搜图）工具，支持 Scrapingdog 与 Google Detecting Web",
+    "version": "0.1.0",
+    "homepage": "https://github.com/CookSleep/chatluna-google-reverse-image-search",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/CookSleep/chatluna-google-reverse-image-search.git"
+    },
+    "bugs": {
+        "url": "https://github.com/CookSleep/chatluna-google-reverse-image-search/issues"
+    },
+    "contributors": [
+        "CookSleep"
+    ],
+    "type": "module",
+    "main": "lib/index.cjs",
+    "module": "lib/index.mjs",
+    "typings": "lib/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "import": "./lib/index.mjs",
+            "require": "./lib/index.cjs"
+        },
+        "./package.json": "./package.json"
+    },
+    "files": [
+        "lib"
+    ],
+    "license": "GPL-3.0-only",
+    "keywords": [
+        "koishi",
+        "chatluna",
+        "google",
+        "google-lens",
+        "scrapingdog",
+        "reverse-image-search",
+        "vision"
+    ],
+    "dependencies": {
+        "@langchain/core": "^0.3.80",
+        "zod": "3.25.76"
+    },
+    "resolutions": {
+        "@langchain/core": "^0.3.80",
+        "js-tiktoken": "npm:@dingyi222666/js-tiktoken@^1.0.21"
+    },
+    "overrides": {
+        "@langchain/core": "^0.3.80",
+        "js-tiktoken": "npm:@dingyi222666/js-tiktoken@^1.0.21"
+    },
+    "pnpm": {
+        "overrides": {
+            "@langchain/core": "^0.3.80",
+            "js-tiktoken": "npm:@dingyi222666/js-tiktoken@^1.0.21"
+        }
+    },
+    "devDependencies": {
+        "@koishijs/client": "^5.30.11",
+        "esbuild": "^0.25.10",
+        "koishi": "^4.18.9",
+        "koishi-plugin-chatluna": "^1.3.16",
+        "typescript": "^5.9.3",
+        "yakumo": "^1.0.0",
+        "yakumo-esbuild": "^1.0.0",
+        "yakumo-tsc": "^1.0.0"
+    },
+    "peerDependencies": {
+        "koishi": "^4.18.9",
+        "koishi-plugin-chatluna": "^1.3.0-alpha.49"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "scripts": {
+        "build": "npx yakumo build",
+        "fast-build": "npx yakumo build -- --ext=.ts",
+        "bump": "npx yakumo version",
+        "dep": "npx yakumo upgrade",
+        "pub": "npx yakumo publish"
+    },
+    "koishi": {
+        "category": "ai",
+        "description": {
+            "zh": "为 ChatLuna 提供 Reverse Image Search（以图搜图）工具，支持 Scrapingdog 与 Google Detecting Web。"
+        },
+        "service": {
+            "required": [
+                "chatluna",
+                "database"
+            ]
+        }
+    }
+}
