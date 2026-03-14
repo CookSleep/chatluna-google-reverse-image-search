@@ -2,7 +2,7 @@
 
 ![npm](https://img.shields.io/npm/v/koishi-plugin-chatluna-google-reverse-image-search) ![License](https://img.shields.io/badge/license-GPLv3-brightgreen)
 
-为 ChatLuna 提供以图搜图工具，支持 Scrapingdog Google Lens API 与 Google Cloud Vision Detecting Web API。
+为 ChatLuna 提供 Google Reverse Image Search（Google Lens 以图搜图）工具，支持 Scrapingdog Google Lens API 与 Google Cloud Vision Detecting Web API。
 
 ## ✨ 功能特性
 
