@@ -25,14 +25,14 @@
 
 ## ⚙️ 主要配置
 
-- `tool.*`：工具开关、名称、描述。
-- `provider`：服务提供商，`scrapingdog` 或 `google`（默认 `scrapingdog`）。
-- `apiKey`：所选服务提供商 API Key。
-- `serverPath`：Koishi 公网地址。用于将查询中 `chatluna-storage-service` 的内网 `serverPath` 替换成公网地址（若 storage-service 已配置公网地址，请留空）。
-- `timeoutSeconds`：请求超时（秒）。
-- `maxResults`：最大返回结果数。
-- `customPrompt`：附加到工具结果 `note` 的自定义提示词。
-- `cacheService.*`：缓存开关、TTL、清理间隔、缩略图转存开关。
+- `tool.*`：工具开关、名称、描述
+- `provider`：服务提供商，`scrapingdog` 或 `google`（默认 `scrapingdog`）
+- `apiKey`：所选服务提供商 API Key
+- `serverPath`：Koishi 公网地址。用于将查询中 `chatluna-storage-service` 的内网 `serverPath` 替换成公网地址（若 `chatluna-storage-service` 已配置公网地址，请留空）
+- `timeoutSeconds`：请求超时（秒）
+- `maxResults`：最大返回结果数
+- `customPrompt`：附加到工具结果 `note` 的自定义提示词
+- `cacheService.*`：缓存开关、TTL、清理间隔、缩略图转存开关
 
 ## ✅ 使用前置条件
 

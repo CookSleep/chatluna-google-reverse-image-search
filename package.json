@@ -1,7 +1,7 @@
 {
     "name": "koishi-plugin-chatluna-google-reverse-image-search",
     "description": "为 ChatLuna 提供 Google Reverse Image Search（Google Lens 以图搜图）工具，支持 Scrapingdog Google Lens API 与 Google Cloud Vision Detecting Web API",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "homepage": "https://github.com/CookSleep/chatluna-google-reverse-image-search",
     "repository": {
         "type": "git",
