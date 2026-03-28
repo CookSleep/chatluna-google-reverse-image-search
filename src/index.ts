@@ -671,12 +671,25 @@ export function apply(ctx: Context, cfg: Config) {
         }
 
         const toolName = (cfg.tool.name || 'google_reverse_image_search').trim() || 'google_reverse_image_search'
+        const tool = new GoogleReverseImageTool(ctx, cfg, cache)
         ctx.effect(() => ctx.chatluna.platform.registerTool(toolName, {
+            description: tool.description,
             selector() {
                 return true
             },
             createTool() {
                 return new GoogleReverseImageTool(ctx, cfg, cache)
+            },
+            meta: {
+                source: 'extension',
+                group: 'google-reverse-image-search',
+                tags: ['google-reverse-image-search'],
+                defaultAvailability: {
+                    enabled: true,
+                    main: true,
+                    chatluna: true,
+                    characterScope: 'all'
+                }
             }
         }))
     })
