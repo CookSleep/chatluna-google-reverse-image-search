@@ -1,6 +1,8 @@
 import { StructuredTool } from '@langchain/core/tools'
 import { Context } from 'koishi'
 import type { ChatLunaToolRunnable } from 'koishi-plugin-chatluna/llm-core/platform/types'
+import { chatLunaFetch } from 'koishi-plugin-chatluna/utils/request'
+import type { RequestInit } from 'undici/types/fetch'
 import { z } from 'zod'
 import { Config, name } from './config'
 
@@ -258,17 +260,17 @@ class GoogleReverseImageTool extends StructuredTool {
 }
 
 async function callGoogleVision(imageUrl: string, cfg: Config): Promise<GoogleResultPayload> {
-    const imgRes = await fetch(imageUrl, {
+    const imgRes = await request(imageUrl, {
         method: 'GET',
         signal: AbortSignal.timeout(cfg.timeoutSeconds * 1000)
-    })
+    }, cfg)
     if (!imgRes.ok) {
         throw new Error(`获取图像失败：HTTP ${imgRes.status}`)
     }
     const bytes = Buffer.from(await imgRes.arrayBuffer())
     const base64Url = bytes.toString('base64')
 
-    const apiRes = await fetch(
+    const apiRes = await request(
         `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(cfg.apiKey)}`,
         {
             method: 'POST',
@@ -291,7 +293,8 @@ async function callGoogleVision(imageUrl: string, cfg: Config): Promise<GoogleRe
                 ]
             }),
             signal: AbortSignal.timeout(cfg.timeoutSeconds * 1000)
-        }
+        },
+        cfg
     )
 
     const data = await apiRes.json() as VisionResponse
@@ -346,12 +349,13 @@ async function callScrapingdog(ctx: Context, imageUrl: string, cfg: Config): Pro
         url: lensUrl,
         exact_matches: 'true'
     })
-    const apiRes = await fetch(
+    const apiRes = await request(
         `https://api.scrapingdog.com/google_lens?${params.toString()}`,
         {
             method: 'GET',
             signal: AbortSignal.timeout(cfg.timeoutSeconds * 1000)
-        }
+        },
+        cfg
     )
     const data = await apiRes.json() as ScrapingdogResponse
     if (!apiRes.ok) {
@@ -537,7 +541,7 @@ async function needRefreshScrapingdogCache(ctx: Context, cfg: Config, hit: Outpu
     if (!urls.length) return false
 
     for (const url of urls) {
-        const ok = await checkUrlAlive(url, cfg.timeoutSeconds)
+        const ok = await checkUrlAlive(url, cfg)
         if (!ok) {
             return true
         }
@@ -568,14 +572,14 @@ function isStorageLikeUrl(url: string) {
     return url.includes('/chatluna-storage/') || url.includes('/chatluna_storage/')
 }
 
-async function checkUrlAlive(url: string, timeoutSeconds: number) {
-    const timeout = Math.max(5, timeoutSeconds)
+async function checkUrlAlive(url: string, cfg: Config) {
+    const timeout = Math.max(5, cfg.timeoutSeconds)
 
     try {
-        const head = await fetch(url, {
+        const head = await request(url, {
             method: 'HEAD',
             signal: AbortSignal.timeout(timeout * 1000)
-        })
+        }, cfg)
         if (head.ok) return true
         if (head.status === 404 || head.status === 410) return false
     } catch {
@@ -583,18 +587,29 @@ async function checkUrlAlive(url: string, timeoutSeconds: number) {
     }
 
     try {
-        const get = await fetch(url, {
+        const get = await request(url, {
             method: 'GET',
             signal: AbortSignal.timeout(timeout * 1000),
             headers: {
                 range: 'bytes=0-0'
             }
-        })
+        }, cfg)
         if (get.ok) return true
         if (get.status === 404 || get.status === 410) return false
         return false
     } catch {
         return false
+    }
+}
+
+function request(url: string, init: RequestInit, cfg: Config) {
+    switch (cfg.proxyMode) {
+        case 'system':
+            return chatLunaFetch(url, init)
+        case 'off':
+            return chatLunaFetch(url, init, 'null')
+        case 'on':
+            return chatLunaFetch(url, init, cfg.proxyAddress)
     }
 }
 

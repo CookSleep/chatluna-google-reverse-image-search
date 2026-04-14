@@ -7,6 +7,8 @@ export interface Config {
     maxResults: number;
     customPrompt: string;
     debug: boolean;
+    proxyMode: 'system' | 'off' | 'on';
+    proxyAddress?: string;
     cacheService: {
         enable: boolean;
         ttlSeconds: number;

@@ -8,6 +8,8 @@ export interface Config {
     maxResults: number
     customPrompt: string
     debug: boolean
+    proxyMode: 'system' | 'off' | 'on'
+    proxyAddress?: string
     cacheService: {
         enable: boolean
         ttlSeconds: number
@@ -62,6 +64,27 @@ reddit.com
             .description('将你自己的以图搜图经验或输出要求告知模型，如：在哪些网页更加可能找到原图、以什么格式给出包含匹配图片的网页链接（在此处填写的提示词将会附加在正常的工具响应中以指导模型）'),
         debug: Schema.boolean().default(false).description('输出调试日志')
     }).description('基础设置'),
+    Schema.intersect([
+        Schema.object({
+            proxyMode: Schema.union([
+                Schema.const('system').description('遵循 ChatLuna 主插件的全局代理设置'),
+                Schema.const('off').description('禁用代理'),
+                Schema.const('on').description('使用自定义代理设置')
+            ]).default('system').description('代理模式')
+        }),
+        Schema.union([
+            Schema.object({
+                proxyMode: Schema.const('on').required(),
+                proxyAddress: Schema.string().default('http://127.0.0.1:7897').description('自定义代理地址')
+            }),
+            Schema.object({
+                proxyMode: Schema.const('off').required()
+            }),
+            Schema.object({
+                proxyMode: Schema.const('system')
+            })
+        ])
+    ]),
     Schema.object({
         cacheService: Schema.object({
             enable: Schema.boolean().default(true).description('启用同 URL 结果缓存'),

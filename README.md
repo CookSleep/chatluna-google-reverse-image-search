@@ -30,6 +30,8 @@
 - `apiKey`：所选服务提供商 API Key
 - `serverPath`：Koishi 公网地址。用于将查询中 `chatluna-storage-service` 的内网 `serverPath` 替换成公网地址（若 `chatluna-storage-service` 已配置公网地址，请留空）
 - `timeoutSeconds`：请求超时（秒）
+- `proxyMode`：代理模式，支持沿用 ChatLuna 全局代理、禁用代理、使用自定义代理
+- `proxyAddress`：自定义代理地址，仅在 `proxyMode=on` 时生效
 - `maxResults`：最大返回结果数
 - `customPrompt`：附加到工具结果 `note` 的自定义提示词
 - `cacheService.*`：缓存开关、TTL、清理间隔、缩略图转存开关
