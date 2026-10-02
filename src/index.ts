@@ -1,4 +1,5 @@
 import { StructuredTool } from '@langchain/core/tools'
+import { HumanMessage } from '@langchain/core/messages'
 import { Context } from 'koishi'
 import type { ChatLunaToolRunnable } from 'koishi-plugin-chatluna/llm-core/platform/types'
 import { chatLunaFetch } from 'koishi-plugin-chatluna/utils/request'
@@ -182,7 +183,7 @@ class ReverseImageCacheService {
 }
 
 const schema = z.object({
-    imageUrl: z.string().url().describe('需要执行以图搜图的图像 URL。')
+    imageUrl: z.string().url().describe('需要执行以图搜图的图像 URL。工具内部会自动处理该 URL 对搜索服务的可访问性，直接传入即可，无需担心链接是否能被外部访问。')
 })
 
 class GoogleReverseImageTool extends StructuredTool {
@@ -208,6 +209,13 @@ class GoogleReverseImageTool extends StructuredTool {
         _runnable: ChatLunaToolRunnable
     ) {
         const log = this.ctx.logger(name)
+        const configurable = _runnable?.configurable as
+            | (ChatLunaToolRunnable['configurable'] & {
+                agentContext?: { conversationId?: string }
+            })
+            | undefined
+        const conversationId = configurable?.agentContext?.conversationId
+            || configurable?.conversationId
         const url = input.imageUrl.trim()
         const scrapingdogImageUrl = this.cfg.provider === 'scrapingdog'
             ? rewriteImageUrlForScrapingdog(this.ctx, this.cfg, url)
@@ -225,7 +233,8 @@ class GoogleReverseImageTool extends StructuredTool {
                     if (this.cfg.debug) {
                         log.info('缓存命中：%s', key)
                     }
-                    return JSON.stringify(attachNote(hit, this.cfg), null, 2)
+                    injectNote(this.ctx, this.cfg, conversationId)
+                    return JSON.stringify(hit, null, 2)
                 }
             }
 
@@ -248,7 +257,8 @@ class GoogleReverseImageTool extends StructuredTool {
             } else if (this.cfg.debug) {
                 log.info('检测到失败结果，跳过缓存写入：%s', key)
             }
-            return JSON.stringify(attachNote(out, this.cfg), null, 2)
+            injectNote(this.ctx, this.cfg, conversationId)
+            return JSON.stringify(out, null, 2)
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
             if (this.cfg.debug) {
@@ -642,8 +652,7 @@ function shouldCacheResult(result: OutputPayload) {
     )
 }
 
-function attachNote(result: OutputPayload, cfg: Config) {
-
+function injectNote(ctx: Context, cfg: Config, conversationId?: string) {
     const notes = [
         'If you have the `read_files` tool, you can try using it to read media content.'
     ]
@@ -651,10 +660,15 @@ function attachNote(result: OutputPayload, cfg: Config) {
         notes.push(cfg.customPrompt.trim())
     }
 
-    return {
-        ...result,
-        note: notes.join('\n\n')
-    }
+    if (!conversationId) return
+
+    ctx.chatluna.contextManager.inject({
+        conversationId,
+        name: 'google_reverse_image_search_note',
+        value: new HumanMessage(notes.join('\n\n')),
+        once: true,
+        stage: 'after_scratchpad'
+    })
 }
 
 export function apply(ctx: Context, cfg: Config) {
