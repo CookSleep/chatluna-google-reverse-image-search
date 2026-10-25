@@ -101,46 +101,44 @@ reddit.com
 
 export const name = 'chatluna-google-reverse-image-search'
 
-export const usage = `## \`chatluna-google-reverse-image-search\`
-为 ChatLuna 提供 Google Reverse Image Search（Google Lens 以图搜图）工具，支持 Scrapingdog Google Lens API 与 Google Cloud Vision Detecting Web API
+export const usage = `## chatluna-google-reverse-image-search
+为 ChatLuna 提供 Google Reverse Image Search（Google Lens 以图搜图）工具，支持 Scrapingdog Google Lens API 与 Google Cloud Vision Detecting Web API。
 
 ### 效果
-- Scrapingdog 的 Google Lens API 作为爬虫，效果与 Google Lens 几乎完全一致，并且提供免费试用积分，充值方式也更友好
-- Google 的 Detecting Web API 的效果比 Google Lens 差一些
+- Scrapingdog 的 Google Lens API 基于爬虫，效果与 Google Lens 几乎一致，并提供免费试用积分，充值方式也更友好。
+- Google Cloud Vision 的 Detecting Web API 效果比 Google Lens 差一些。
 
 ### 特性
-- Scrapingdog 需要在请求中使用公网、可被 Google Lens 访问的图片 URL，若 URL 无法被 Google Lens 访问，则无法进行查询
-- Google 可在请求中包含已转为 Base64 编码的图片，没有这个问题
-- 推荐搭配 \`chatluna-llm-web-search\` 使用效果最佳，它会提供网页读取工具，方便模型进一步读取搜索结果页面并寻找原帖链接
+- Scrapingdog 需要在请求中使用公网、可被 Google Lens 访问的图片 URL；若 URL 无法被访问，则无法查询。图片来自 \`chatluna-storage-service\` 时，如其 \`serverPath\` 不是公网地址，请在本插件的 \`serverPath\` 中填写 Koishi 的公网地址。
+- Google Cloud Vision 可在请求中直接包含 Base64 编码的图片，没有这个问题。
+- 推荐搭配 \`chatluna-llm-web-search\` 使用，它提供网页读取工具，方便模型进一步读取搜索结果页面并寻找原帖链接。
 
-### 价格
+### Scrapingdog 价格
+- 注册后赠送 30 天免费体验套餐，期间包含等价于 200 次 Google Lens API 请求的免费积分。
+- 按需计费充值：$10 可购买等价于 5000 次 Google Lens API 请求的积分。
+- 订阅制套餐：见[**官方网站**](https://api.scrapingdog.com/billing)。
 
-#### Scrapingdog
-- 注册后赠送 30 天免费体验套餐，期间包含等价于 200 次 Google Lens API 请求的免费积分
-- 按需计费充值：$10 可购买等价于 5000 次 Google Lens API 请求的积分
-- 订阅制套餐：见[**官方网站**](https://api.scrapingdog.com/billing)
+以上数据仅供参考，可能不是最新版本，请以官网为准。
 
-以上数据仅供参考，可能不是最新版本，请以官网为准
+### Google Cloud Vision 价格
+| 请求量（每月） | 价格（每次请求） |
+| --- | --- |
+| 前 1000 次 | 免费 |
+| 第 1001~5,000,000 次 | $0.0035 |
+| 5,000,001 次以上 | 需联系 Google 报价 |
 
-#### Google
-- 前 1000 次/月：免费
-- 第 1001~5,000,000 次/月：$0.0035/次
-- 5,000,001 次以上/月：需要联系 Google 报价
+以上数据仅供参考，可能不是最新版本，请以[**官方文档**](https://cloud.google.com/vision/pricing)为准。
 
-以上数据仅供参考，可能不是最新版本，请以[**官方文档**](https://cloud.google.com/vision/pricing)为准
+### 获取 Scrapingdog API Key
+1. 注册 [**Scrapingdog**](https://api.scrapingdog.com) 账户。
+2. 在[**控制台**](https://api.scrapingdog.com)点击“YOUR API KEY”中的“Copy”按钮，复制 API Key。
+3. 将 API Key 填入本插件，重载配置以应用。
 
-### 获取 API Key
-
-#### 获取 Scrapingdog 的 API Key
-1. 注册 [**Scrapingdog**](https://api.scrapingdog.com) 账户
-2. 在 [**此处**](https://api.scrapingdog.com) 点击 **YOUR API KEY** 中的 **Copy** 按钮，复制 API Key
-3. 将 API Key 填入本插件中，重载配置以应用
-
-#### 获取 Google Detecting Web API 的 API Key
-1. 注册 [**Google Cloud**](https://console.cloud.google.com) 账户并创建结算账户（需要 VISA/Mastercard 信用卡）
-2. 在 [**此处**](https://console.cloud.google.com/apis/dashboard) 点击 **启用 API 和服务**，搜索并选择 **Cloud Vision API**，进入详情页面启用它
-3. 在 [**此处**](https://console.cloud.google.com/apis/credentials) 点击 **创建凭证**，选择 **API 密钥**，填写一个合适的名称，在 **API 限制** 中搜索并选择 **Cloud Vision API**，点击 **创建**
-4. 复制并将 API Key 填入本插件中，重载配置以应用`
+### 获取 Google Cloud Vision API Key
+1. 注册 [**Google Cloud**](https://console.cloud.google.com) 账户并创建结算账户（需要 VISA/Mastercard 信用卡）。
+2. 在[**API 和服务**](https://console.cloud.google.com/apis/dashboard)页面点击“启用 API 和服务”，搜索并选择“Cloud Vision API”，进入详情页面启用它。
+3. 在[**凭据**](https://console.cloud.google.com/apis/credentials)页面点击“创建凭据”，选择“API 密钥”，填写一个合适的名称，在“API 限制”中搜索并选择“Cloud Vision API”，点击“创建”。
+4. 复制 API Key 并填入本插件，重载配置以应用。`
 
 export const inject = {
     required: ['chatluna', 'database'],
