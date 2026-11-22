@@ -2,12 +2,12 @@
 
 # ChatLuna Google Reverse Image Search
 
-[![npm](https://img.shields.io/npm/v/koishi-plugin-chatluna-google-reverse-image-search?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-chatluna-google-reverse-image-search)
+[![npm](https://img.shields.io/npm/v/chatluna-plugin-google-reverse-image-search?style=flat-square)](https://www.npmjs.com/package/chatluna-plugin-google-reverse-image-search)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
 
 **让 ChatLuna 用 Google Lens 找图片出处**
 
-为 [ChatLuna](https://github.com/ChatLunaLab/chatluna) 提供以图搜图工具：传入图片 URL，返回包含匹配图片的网页链接。<br>
+为 [ChatLuna](https://github.com/ChatLunaLab/chatluna) 提供以图搜图工具：传入当前对话的图片 ref 或公网图片 URL，返回包含匹配图片的网页链接。<br>
 可选 [Scrapingdog](https://www.scrapingdog.com/) 的 Google Lens API，或 Google Cloud Vision 的 Web Detection。
 
 </div>
@@ -18,7 +18,7 @@
 
 ### 🔎 两种搜索服务
 - **Scrapingdog（默认）**：抓取 Google Lens 的结果，效果与 Google Lens 几乎一致；图片 URL 必须能被公网访问。
-- **Google Cloud Vision**：插件先下载图片，再以 Base64 提交，不要求图片能被公网访问，效果比 Google Lens 差一些。
+- **Google Cloud Vision**：聊天附件以 Base64 提交，公网图片地址由 Google 读取，效果比 Google Lens 差一些。
 
 ### 🧠 精简的结果
 - **Scrapingdog**：去掉 `related_searches`、`price`、`in_stock` 等与找出处无关的字段。
@@ -26,36 +26,16 @@
 - **结果数**：默认最多 10 条，最多 50 条。
 
 ### 🗺️ 引导模型找原帖
-- **自定义提示词**：搜索后把提示词作为附加的用户消息注入上下文。默认提示词列出更可能是作者原帖的网站（X、e621、Danbooru、Pixiv 等）及取舍规则，可以换成你自己的经验。
+- **自定义提示词**：搜索后在工具结果中附带提示词。默认提示词列出更可能是作者原帖的网站（X、e621、Danbooru、Pixiv 等）及取舍规则，可以换成你自己的经验。
 - **配合网页读取**：与 [chatluna-llm-web-search](https://github.com/CookSleep/chatluna-llm-web-search) 搭配时，模型可以进一步读取结果页面，寻找原帖链接。
 
-### 🖼️ 缩略图与内网图片
-- **缩略图转存**：把 Scrapingdog 返回的 Base64 缩略图存入 `chatluna-storage-service`，换成可访问的 URL，方便模型用 `read_files` 查看；转存失败时删去该条的缩略图。
-- **内网地址替换**：图片来自 `chatluna-storage-service` 且其地址是内网地址时，用你填写的 Koishi 公网地址替换，让 Scrapingdog 能抓取。
+### 聊天图片与缓存
 
-### ⚡ 缓存
-- **同 URL 缓存**：结果存入数据库，默认保存 1 天，每 10 分钟清理过期记录。
-- **失败不缓存**：失败的结果不写入缓存。
-- **缩略图失效自动刷新**：缓存中的缩略图链接失效时重新查询并覆盖。
+用户发图后，工具通过当前对话的图片 ref（包括引用消息中的图片）读取附件。Google Cloud Vision 直接接收图片内容。Scrapingdog 读取实例文件存储的公网链接，请在 `serverPath` 中填写对外可访问的实例地址，并确保服务商无需登录即可获取该图片。搜索结果默认缓存 24 小时，Scrapingdog 的内联缩略图可转存到实例文件存储。
 
----
+## 安装与使用
 
-## ✅ 前置条件
-
-- Koishi，以及已安装并配置好模型的 [ChatLuna](https://github.com/ChatLunaLab/chatluna)（`koishi-plugin-chatluna` 1.3.36 及以上）。
-- 需要 `database` 服务。
-- 所选服务提供商的 API Key。未填写时插件不会注册工具。
-- 可选：[`koishi-plugin-chatluna-storage-service`](https://www.npmjs.com/package/koishi-plugin-chatluna-storage-service)，用于转存缩略图。
-- 可选：[`koishi-plugin-chatluna-llm-web-search`](https://www.npmjs.com/package/koishi-plugin-chatluna-llm-web-search)，提供网页读取工具。
-- 使用 Scrapingdog 时，图片 URL 必须能被公网访问；`localhost`、`127.0.0.1`、`koishi` 容器域名和私网 IP 都无法被抓取。
-
-## 📦 安装
-
-在 Koishi 控制台的插件市场中搜索 `chatluna-google-reverse-image-search` 安装，或在 Koishi 项目目录中运行：
-
-```bash
-npm install koishi-plugin-chatluna-google-reverse-image-search
-```
+本分支面向 ChatLuna V2，包名为 `chatluna-plugin-google-reverse-image-search`。`main` 分支继续维护 Koishi 版。实例需启用工具、HTTP、数据库及文件存储服务。配置所选服务商的凭据后，在聊天中发送图片并询问“这张图的原帖在哪里？”。
 
 ## 🔑 获取 API Key
 
@@ -79,8 +59,8 @@ npm install koishi-plugin-chatluna-google-reverse-image-search
 | `tool` | 是否注册工具、工具名（默认 `google_reverse_image_search`）、工具描述。 |
 | `provider` | 服务提供商：`scrapingdog`（默认）或 `google`。 |
 | `apiKey` | 所选服务提供商的 API Key。 |
-| `serverPath` | Koishi 的公网地址，用于替换 `chatluna-storage-service` 的内网地址；`chatluna-storage-service` 中填的已是公网地址时留空。 |
-| `timeoutSeconds` | 网络请求超时，默认 20 秒。 |
+| `serverPath` | 实例公开提供 `/files/` 的地址。Scrapingdog 搜索聊天附件时需要填写。 |
+| `timeoutSeconds` | 网络请求超时，默认 90 秒。 |
 | `maxResults` | 最大返回结果数，默认 10。 |
 | `customPrompt` | 搜索后注入上下文的提示词。 |
 | `proxyMode` | 代理：沿用 ChatLuna 的全局代理（默认）、禁用，或使用 `proxyAddress` 指定的代理。 |
@@ -99,6 +79,5 @@ npm install koishi-plugin-chatluna-google-reverse-image-search
 
 ## 🙏 致谢
 
-- [ChatLuna](https://github.com/ChatLunaLab/chatluna)：插件所扩展的 Koishi 大模型对话框架。
-- [Koishi](https://koishi.chat/)：机器人框架。
+- [ChatLuna](https://github.com/ChatLunaLab/chatluna)：插件所扩展的对话框架。
 - [Scrapingdog](https://www.scrapingdog.com/) 与 [Google Cloud Vision](https://cloud.google.com/vision)：提供以图搜图的接口。

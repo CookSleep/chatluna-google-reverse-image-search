@@ -1,31 +1,61 @@
-name: Publish Package
+name: 构建与发布 V2 插件
 
 on:
+  pull_request:
+    branches: [v2]
   push:
-    tags:
-      - 'v*'
+    branches: [v2]
+    tags: ['v2-*']
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
-  publish:
+  pack:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
         with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Show tool versions
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+      - name: 校验包名、版本和发布分支
         run: |
-          node --version
-          npm --version
+          test "$(node -p "require('./package.json').name")" = chatluna-plugin-google-reverse-image-search
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v2-$(node -p "require('./package.json').version")"
+            git merge-base --is-ancestor HEAD origin/v2
+          fi
+      - name: 从源码复现已通过 V2 实例测试的产物
+        run: |
+          stage=$(mktemp -d)
+          cp -r src "$stage/"
+          (cd "$stage" && npm exec --yes --package=typescript@7.0.2 -- tsc --ignoreConfig --noCheck --target ES2024 --module ESNext --declaration --outDir lib src/*.ts)
+          diff -ru lib "$stage/lib"
+          cp package.json README.md LICENSE "$stage/"
+          mkdir release
+          (cd "$stage" && npm pack --pack-destination "$GITHUB_WORKSPACE/release")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: release/*.tgz
+          if-no-files-found: error
 
-      - name: Publish to npm (Trusted Publishing via OIDC)
-        run: npm publish --access public --provenance
+  publish:
+    if: github.ref_type == 'tag'
+    needs: pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: release
+      - run: npm publish ./release/*.tgz --access public --provenance

@@ -1,21 +1,17 @@
-import { StructuredTool } from '@langchain/core/tools'
-import { HumanMessage } from '@langchain/core/messages'
-import { Context } from 'koishi'
-import type { ChatLunaToolRunnable } from 'koishi-plugin-chatluna/llm-core/platform/types'
-import { chatLunaFetch } from 'koishi-plugin-chatluna/utils/request'
-import type { RequestInit } from 'undici/types/fetch'
-import { z } from 'zod'
-import { Config, name } from './config'
+import { createHash } from 'node:crypto'
+import type { Context } from 'cordis'
+import { Schema } from '@chatluna/schema'
+import { defineTool } from '@chatluna/tool'
+import { fileRefTableOf } from '@chatluna/transform'
+import type { ChatMessage } from '@chatluna/message'
+import type {} from '@chatluna/storage-files'
+import type {} from '@cordisjs/plugin-http'
+import type {} from '@cordisjs/plugin-database'
+import type { Config } from './config.js'
 
-const CACHE_TABLE = 'chatluna_google_reverse_image_cache'
-
-type StorageService = {
-    config?: {
-        serverPath?: string
-    }
-    createTempFile: (buffer: Buffer, filename: string, ttlHours: number) => Promise<{ url: string }>
-}
-
+export * from './config.js'
+export const inject = ['tools', 'http', 'model', 'database', 'chatluna_storage']
+const CACHE_TABLE = 'chatluna_reverse_image_v2_cache'
 type WebDetection = {
     webEntities?: Array<{ entityId?: string; score?: number; description?: string }>
     fullMatchingImages?: Array<{ url?: string }>
@@ -78,427 +74,21 @@ type ScrapingdogResultPayload = {
 
 type OutputPayload = GoogleResultPayload | ScrapingdogResultPayload
 
-type CacheRow = {
+interface CacheRow {
     key: string
-    payload: OutputPayload
+    payload: string
     createdAt: Date
-    expiresAt: string | number | Date
+    expiresAt: Date
 }
 
-declare module 'koishi' {
-    interface Tables {
-        chatluna_google_reverse_image_cache: CacheRow
-    }
-
-    interface Context {
-        chatluna_storage?: StorageService
-    }
-}
-
-class ReverseImageCacheService {
-    initialized = false
-    cleanupRunning = false
-    lastCleanupAt = 0
-
-    constructor(
-        private ctx: Context,
-        private cfg: Config
-    ) { }
-
-    async init() {
-        this.initialized = true
-        await this.cleanupExpired()
-    }
-
-    async ensureReady() {
-        if (this.initialized) return
-        await this.init()
-    }
-
-    async get(key: string): Promise<OutputPayload | null> {
-        if (!this.cfg.cacheService.enable) return null
-        await this.ensureReady()
-        await this.maybeCleanup()
-        const db = this.ctx.database as any
-        const rows = await db.get(
-            CACHE_TABLE,
-            { key },
-            ['key', 'payload', 'expiresAt']
-        )
-        const row = rows[0] as CacheRow | undefined
-        if (!row) return null
-        const expiresAtMs = Date.parse(String(row.expiresAt))
-        if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
-            await db.remove(CACHE_TABLE, { key })
-            return null
-        }
-        return row.payload
-    }
-
-    async set(key: string, payload: OutputPayload): Promise<void> {
-        if (!this.cfg.cacheService.enable) return
-        await this.ensureReady()
-        await this.maybeCleanup()
-        const now = new Date()
-        const expiresAt = new Date(
-            now.getTime() + this.cfg.cacheService.ttlSeconds * 1000
-        )
-        const db = this.ctx.database as any
-        await db.upsert(
-            CACHE_TABLE,
-            [{
-                key,
-                payload,
-                createdAt: now,
-                expiresAt
-            }],
-            ['key']
-        )
-    }
-
-    async maybeCleanup() {
-        const now = Date.now()
-        if (
-            now - this.lastCleanupAt
-            < this.cfg.cacheService.cleanupIntervalSeconds * 1000
-        ) {
-            return
-        }
-        this.lastCleanupAt = now
-        await this.cleanupExpired()
-    }
-
-    async cleanupExpired() {
-        if (this.cleanupRunning) return
-        this.cleanupRunning = true
-        try {
-            const db = this.ctx.database as any
-            await db.remove(CACHE_TABLE, {
-                expiresAt: { $lte: new Date() }
-            })
-        } finally {
-            this.cleanupRunning = false
-        }
-    }
-}
-
-const schema = z.object({
-    imageUrl: z.string().url().describe('需要执行以图搜图的图像 URL。工具内部会自动处理该 URL 对搜索服务的可访问性，直接传入即可，无需担心链接是否能被外部访问。')
-})
-
-class GoogleReverseImageTool extends StructuredTool {
-    name: string
-    description: string
-    schema = schema
-
-    constructor(
-        private ctx: Context,
-        private cfg: Config,
-        private cache: ReverseImageCacheService
-    ) {
-        super({})
-        this.name = (cfg.tool.name || 'google_reverse_image_search').trim()
-        this.description =
-            (cfg.tool.description || '').trim()
-            || '使用 Google Detecting Web 进行以图搜图，输入图像 URL 并返回匹配线索。'
-    }
-
-    async _call(
-        input: z.infer<typeof schema>,
-        _runManager: unknown,
-        _runnable: ChatLunaToolRunnable
-    ) {
-        const log = this.ctx.logger(name)
-        const configurable = _runnable?.configurable as
-            | (ChatLunaToolRunnable['configurable'] & {
-                agentContext?: { conversationId?: string }
-            })
-            | undefined
-        const conversationId = configurable?.agentContext?.conversationId
-            || configurable?.conversationId
-        const url = input.imageUrl.trim()
-        const scrapingdogImageUrl = this.cfg.provider === 'scrapingdog'
-            ? rewriteImageUrlForScrapingdog(this.ctx, this.cfg, url)
-            : url
-        const key = `v1:${this.cfg.provider}:max=${this.cfg.maxResults}:serverPath=${trimTrailingSlash((this.cfg.serverPath || '').trim())}:${scrapingdogImageUrl}`
-        try {
-            const hit = await this.cache.get(key)
-            if (hit) {
-                const shouldRefreshScrapingdog = await needRefreshScrapingdogCache(this.ctx, this.cfg, hit)
-                if (shouldRefreshScrapingdog) {
-                    if (this.cfg.debug) {
-                        log.info('检测到 Scrapingdog 缩略图缓存失效，准备重新请求并覆盖缓存：%s', key)
-                    }
-                } else {
-                    if (this.cfg.debug) {
-                        log.info('缓存命中：%s', key)
-                    }
-                    injectNote(this.ctx, this.cfg, conversationId)
-                    return JSON.stringify(hit, null, 2)
-                }
-            }
-
-            if (this.cfg.debug) {
-                log.info('缓存未命中：%s', key)
-            }
-
-            let out: OutputPayload
-            if (this.cfg.provider === 'scrapingdog') {
-                out = await callScrapingdog(this.ctx, url, this.cfg)
-            } else {
-                out = await callGoogleVision(url, this.cfg)
-            }
-
-            if (shouldCacheResult(out)) {
-                await this.cache.set(key, out)
-                if (this.cfg.debug) {
-                    log.info('缓存写入：%s', key)
-                }
-            } else if (this.cfg.debug) {
-                log.info('检测到失败结果，跳过缓存写入：%s', key)
-            }
-            injectNote(this.ctx, this.cfg, conversationId)
-            return JSON.stringify(out, null, 2)
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err)
-            if (this.cfg.debug) {
-                log.error(err)
-            }
-            return `以图搜图失败：${msg}`
-        }
-    }
-}
-
-async function callGoogleVision(imageUrl: string, cfg: Config): Promise<GoogleResultPayload> {
-    const imgRes = await request(imageUrl, {
-        method: 'GET',
-        signal: AbortSignal.timeout(cfg.timeoutSeconds * 1000)
-    }, cfg)
-    if (!imgRes.ok) {
-        throw new Error(`获取图像失败：HTTP ${imgRes.status}`)
-    }
-    const bytes = Buffer.from(await imgRes.arrayBuffer())
-    const base64Url = bytes.toString('base64')
-
-    const apiRes = await request(
-        `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(cfg.apiKey)}`,
-        {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json; charset=utf-8'
-            },
-            body: JSON.stringify({
-                requests: [
-                    {
-                        image: {
-                            content: base64Url
-                        },
-                        features: [
-                            {
-                                maxResults: cfg.maxResults,
-                                type: 'WEB_DETECTION'
-                            }
-                        ]
-                    }
-                ]
-            }),
-            signal: AbortSignal.timeout(cfg.timeoutSeconds * 1000)
-        },
-        cfg
-    )
-
-    const data = await apiRes.json() as VisionResponse
-    if (!apiRes.ok) {
-        throw new Error(`Google Vision 请求失败：${data.error?.message || `HTTP ${apiRes.status}`}`)
-    }
-
-    const first = data.responses?.[0]
-    if (first?.error?.message) {
-        throw new Error(`Google Vision 返回错误：${first.error.message}`)
-    }
-
-    const web = first?.webDetection
-    if (!web) {
-        throw new Error('Google Vision 没有返回可用的 webDetection 结果。')
-    }
-
-    const pages = (web.pagesWithMatchingImages || [])
-        .filter((item) => item.url)
-        .map((item) => ({
-            url: item.url,
-            pageTitle: item.pageTitle || ''
-        }))
-
-    return {
-        provider: 'google',
-        imageUrl,
-        webDetection: {
-            webEntities: (web.webEntities || []).map((item) => ({
-                score: item.score,
-                description: item.description
-            })),
-            fullMatchingImages: [],
-            partialMatchingImages: [],
-            pagesWithMatchingImages: pages,
-            visuallySimilarImages: [],
-            bestGuessLabels: web.bestGuessLabels || []
-        }
-    }
-}
-
-async function callScrapingdog(ctx: Context, imageUrl: string, cfg: Config): Promise<ScrapingdogResultPayload> {
-    const rewrittenImageUrl = rewriteImageUrlForScrapingdog(ctx, cfg, imageUrl)
-
-    if (!isScrapingdogReachableUrl(rewrittenImageUrl)) {
-        throw new Error('Scrapingdog 需要可被公网访问的图像 URL。当前 URL 很可能是内网地址（例如 localhost、127.0.0.1、koishi 容器域名或私网 IP），Scrapingdog 无法抓取。')
-    }
-
-    const lensUrl = `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(rewrittenImageUrl)}`
-    const params = new URLSearchParams({
-        api_key: cfg.apiKey,
-        url: lensUrl,
-        exact_matches: 'true'
-    })
-    const apiRes = await request(
-        `https://api.scrapingdog.com/google_lens?${params.toString()}`,
-        {
-            method: 'GET',
-            signal: AbortSignal.timeout(cfg.timeoutSeconds * 1000)
-        },
-        cfg
-    )
-    const data = await apiRes.json() as ScrapingdogResponse
-    if (!apiRes.ok) {
-        throw new Error(`Scrapingdog 请求失败：${data.error || `HTTP ${apiRes.status}`}`)
-    }
-
-    const result: Omit<ScrapingdogResponse, 'related_searches'> = {
-        ...data
-    }
-    delete (result as { related_searches?: unknown }).related_searches
-
-    if (Array.isArray(result.exact_matches)) {
-        result.exact_matches = result.exact_matches.slice(0, cfg.maxResults)
-    }
-    if (Array.isArray(result.lens_results)) {
-        result.lens_results = result.lens_results.slice(0, cfg.maxResults)
-    }
-    if (Array.isArray(result.visual_matches)) {
-        result.visual_matches = result.visual_matches.slice(0, cfg.maxResults)
-    }
-
-    stripScrapingdogExtraFields(result.exact_matches)
-    stripScrapingdogExtraFields(result.lens_results)
-    stripScrapingdogExtraFields(result.visual_matches)
-
-    await cacheScrapingdogThumbnails(ctx, cfg, result)
-
-    return {
-        provider: 'scrapingdog',
-        imageUrl,
-        ...result
-    }
-}
-
-async function cacheScrapingdogThumbnails(
-    ctx: Context,
-    cfg: Config,
-    data: Omit<ScrapingdogResponse, 'related_searches'>
-) {
-    if (!cfg.cacheService.cacheThumbnails) return
-    if (!hasStorageService(ctx)) return
-
-    await rewriteThumbnailList(ctx, cfg, data.exact_matches)
-    await rewriteThumbnailList(ctx, cfg, data.lens_results)
-    await rewriteThumbnailList(ctx, cfg, data.visual_matches)
-}
-
-async function rewriteThumbnailList(
-    ctx: Context,
-    cfg: Config,
-    list: ScrapingdogResponse['lens_results'] | ScrapingdogResponse['exact_matches'] | ScrapingdogResponse['visual_matches']
-) {
-    if (!Array.isArray(list) || !list.length) return
-
-    const ttlHours = Math.max(1, Math.ceil(cfg.cacheService.ttlSeconds / 3600))
-
-    for (let i = 0; i < list.length; i++) {
-        const item = list[i]
-        if (!item || typeof item !== 'object') continue
-        const raw = typeof item.thumbnail === 'string' ? item.thumbnail : ''
-        if (!raw.startsWith('data:')) continue
-
-        try {
-            const parsed = parseDataUrl(raw)
-            if (!parsed) {
-                delete item.thumbnail
-                continue
-            }
-
-            const stored = await ctx.chatluna_storage!.createTempFile(
-                parsed.buffer,
-                `scrapingdog-thumb-${i + 1}${parsed.ext}`,
-                ttlHours
-            )
-            item.thumbnail = stored.url
-        } catch {
-            delete item.thumbnail
-        }
-    }
-}
-
-function parseDataUrl(dataUrl: string): { buffer: Buffer; ext: string } | null {
-    const match = dataUrl.match(/^data:([^;,]+)?;base64,(.+)$/i)
-    if (!match?.[2]) return null
-
-    try {
-        const mime = (match[1] || '').toLowerCase()
-        const buffer = Buffer.from(match[2], 'base64')
-        if (!buffer.length) return null
-        return {
-            buffer,
-            ext: mimeToExt(mime)
-        }
-    } catch {
-        return null
-    }
-}
-
-function mimeToExt(mime: string) {
-    if (mime.includes('png')) return '.png'
-    if (mime.includes('webp')) return '.webp'
-    if (mime.includes('gif')) return '.gif'
-    return '.jpg'
-}
-
-function hasStorageService(ctx: Context) {
-    return typeof ctx.chatluna_storage?.createTempFile === 'function'
-}
-
-function rewriteImageUrlForScrapingdog(ctx: Context, cfg: Config, imageUrl: string) {
-    const publicServerPath = (cfg.serverPath || '').trim()
-    if (!publicServerPath) return imageUrl
-
-    const storageServerPath = (ctx.chatluna_storage?.config?.serverPath || '').trim()
-    if (!storageServerPath) return imageUrl
-
-    const normalizedStorage = trimTrailingSlash(storageServerPath)
-    const normalizedPublic = trimTrailingSlash(publicServerPath)
-
-    if (!normalizedStorage || !normalizedPublic) return imageUrl
-    if (!imageUrl.startsWith(normalizedStorage)) return imageUrl
-
-    return `${normalizedPublic}${imageUrl.slice(normalizedStorage.length)}`
-}
-
-function trimTrailingSlash(value: string) {
-    return value.replace(/\/+$/, '')
+declare module '@cordisjs/plugin-database' {
+    interface Tables { chatluna_reverse_image_v2_cache: CacheRow }
 }
 
 function isScrapingdogReachableUrl(url: string) {
     try {
         const u = new URL(url)
-        if (!/^https?:$/i.test(u.protocol)) return false
+        if (u.username || u.password || !/^https?:$/i.test(u.protocol)) return false
         const host = u.hostname.toLowerCase()
         if (!host) return false
         if (
@@ -532,95 +122,18 @@ function isPrivateIPv4(host: string) {
     return false
 }
 
-function stripScrapingdogExtraFields(
-    list: ScrapingdogResponse['lens_results'] | ScrapingdogResponse['exact_matches'] | ScrapingdogResponse['visual_matches']
-) {
-    if (!Array.isArray(list)) return
-    for (const item of list) {
-        if (!item || typeof item !== 'object') continue
-        delete (item as { price?: unknown }).price
-        delete (item as { in_stock?: unknown }).in_stock
-    }
-}
-
-async function needRefreshScrapingdogCache(ctx: Context, cfg: Config, hit: OutputPayload) {
-    if (hit.provider !== 'scrapingdog') return false
-    if (!cfg.cacheService.cacheThumbnails) return false
-
-    const urls = collectStorageThumbnailUrls(hit)
-    if (!urls.length) return false
-
-    for (const url of urls) {
-        const ok = await checkUrlAlive(url, cfg)
-        if (!ok) {
-            return true
-        }
-    }
-
-    return false
-}
-
-function collectStorageThumbnailUrls(hit: ScrapingdogResultPayload) {
-    const all: string[] = []
-    const push = (list: ScrapingdogResponse['lens_results'] | ScrapingdogResponse['exact_matches'] | ScrapingdogResponse['visual_matches']) => {
-        if (!Array.isArray(list)) return
-        for (const item of list) {
-            const url = typeof item?.thumbnail === 'string' ? item.thumbnail : ''
-            if (!url) continue
-            if (!isStorageLikeUrl(url)) continue
-            all.push(url)
-        }
-    }
-    push(hit.exact_matches)
-    push(hit.lens_results)
-    push(hit.visual_matches)
-    return all
-}
-
-function isStorageLikeUrl(url: string) {
-    if (!/^https?:\/\//i.test(url)) return false
-    return url.includes('/chatluna-storage/') || url.includes('/chatluna_storage/')
-}
-
-async function checkUrlAlive(url: string, cfg: Config) {
-    const timeout = Math.max(5, cfg.timeoutSeconds)
-
-    try {
-        const head = await request(url, {
-            method: 'HEAD',
-            signal: AbortSignal.timeout(timeout * 1000)
-        }, cfg)
-        if (head.ok) return true
-        if (head.status === 404 || head.status === 410) return false
-    } catch {
-        // ignore and fallback to GET
-    }
-
-    try {
-        const get = await request(url, {
-            method: 'GET',
-            signal: AbortSignal.timeout(timeout * 1000),
-            headers: {
-                range: 'bytes=0-0'
+// Scrapingdog can include a credential-bearing google_goto_link. Copy only model-facing fields.
+function publicMatches(matches: NonNullable<ScrapingdogResponse['lens_results']>, apiKey: string) {
+    return matches.filter(item => item && typeof item === 'object').map(item => {
+        const match: typeof item = {}
+        for (const field of ['title', 'source', 'link', 'url', 'thumbnail', 'image'] as const) {
+            const value = item[field]
+            if (typeof value === 'string' && !value.includes(apiKey) && !value.includes(encodeURIComponent(apiKey))) {
+                match[field] = value
             }
-        }, cfg)
-        if (get.ok) return true
-        if (get.status === 404 || get.status === 410) return false
-        return false
-    } catch {
-        return false
-    }
-}
-
-function request(url: string, init: RequestInit, cfg: Config) {
-    switch (cfg.proxyMode) {
-        case 'system':
-            return chatLunaFetch(url, init)
-        case 'off':
-            return chatLunaFetch(url, init, 'null')
-        case 'on':
-            return chatLunaFetch(url, init, cfg.proxyAddress)
-    }
+        }
+        return match
+    })
 }
 
 function shouldCacheResult(result: OutputPayload) {
@@ -652,76 +165,149 @@ function shouldCacheResult(result: OutputPayload) {
     )
 }
 
-function injectNote(ctx: Context, cfg: Config, conversationId?: string) {
-    const notes = [
-        'If you have the `read_files` tool, you can try using it to read media content.'
-    ]
-    if (cfg.customPrompt.trim()) {
-        notes.push(cfg.customPrompt.trim())
+
+function messagesOf(agent: object | undefined): readonly ChatMessage[] {
+    const session: unknown = agent && 'session' in agent ? agent.session : undefined
+    if (!session || typeof session !== 'object' || !('messages' in session)) return []
+    return typeof session.messages === 'function' ? session.messages() : []
+}
+
+type ImageInput = { url: string } | { content: string }
+
+function publicFile(base: string, path: string) {
+    const url = base.trim().replace(/\/+$/, '') + path
+    if (!base.trim() || !isScrapingdogReachableUrl(url)) {
+        throw new Error('请配置实例的公网地址，使 Scrapingdog 可以读取 /files/ 下的聊天图片。')
     }
+    return url
+}
 
-    if (!conversationId) return
+async function resolveImage(ctx: Context, cfg: Config, input: string, agent?: object): Promise<ImageInput> {
+    if (/^https?:\/\//i.test(input)) {
+        if (!isScrapingdogReachableUrl(input)) throw new Error('请使用公网图片 URL 或当前对话中的图片 ref。')
+        return { url: input }
+    }
+    if (!/^i?[0-9a-f]{6,64}$/.test(input)) throw new Error('请输入当前对话的图片 ref 或公网图片 URL。')
+    const block = fileRefTableOf(messagesOf(agent)).resolve(input)
+    if (!block?.mediaType.startsWith('image/')) throw new Error('当前对话中找不到对应图片。')
+    const data = block.data
+    if (data.type === 'url' && isScrapingdogReachableUrl(data.url)) return { url: data.url }
+    if (data.type === 'reference' && data.reference.startsWith('storage://')) {
+        const file = await ctx.chatluna_storage.getTempFile(data.reference.slice(10))
+        if (!file) throw new Error('聊天图片已过期，请重新发送。')
+        return cfg.provider === 'google' ? { content: (await file.data).toString('base64') }
+            : { url: publicFile(cfg.serverPath, file.url) }
+    }
+    if (data.type !== 'data') throw new Error('该图片没有可用的内容，请重新发送。')
+    if (cfg.provider === 'google') return { content: data.data }
+    const file = await ctx.chatluna_storage.createTempFile(Buffer.from(data.data, 'base64'), 'image', { mimeType: block.mediaType })
+    return { url: publicFile(cfg.serverPath, file.url) }
+}
 
-    ctx.chatluna.contextManager.inject({
-        conversationId,
-        name: 'google_reverse_image_search_note',
-        value: new HumanMessage(notes.join('\n\n')),
-        once: true,
-        stage: 'after_scratchpad'
+async function search(ctx: Context, cfg: Config, image: ImageInput, input: string, signal: AbortSignal): Promise<OutputPayload> {
+    const options = {
+        signal, timeout: cfg.timeoutSeconds * 1000, validateStatus: () => true,
+        ...(cfg.proxyMode === 'system' ? {} : { proxyAgent: cfg.proxyMode === 'off' ? '' : cfg.proxyAddress || '' })
+    }
+    if (cfg.provider === 'google') {
+        const response = await ctx.http('https://vision.googleapis.com/v1/images:annotate', {
+            ...options, method: 'POST', headers: { 'X-Goog-Api-Key': cfg.apiKey },
+            data: { requests: [{ image: 'content' in image ? image : { source: { imageUri: image.url } },
+                features: [{ type: 'WEB_DETECTION', maxResults: cfg.maxResults }] }] }
+        })
+        const data = await response.json() as VisionResponse
+        const first = data.responses?.[0]
+        if (!response.ok || first?.error || !first?.webDetection) {
+            throw new Error(first?.error?.message || data.error?.message || 'Google Vision 查询失败，HTTP ' + response.status)
+        }
+        const web = first.webDetection
+        return { provider: 'google', imageUrl: input, webDetection: {
+            pagesWithMatchingImages: (web.pagesWithMatchingImages || []).filter(item => item.url).slice(0, cfg.maxResults),
+            webEntities: (web.webEntities || []).map(({ entityId, ...entity }) => entity).slice(0, cfg.maxResults),
+            bestGuessLabels: web.bestGuessLabels || []
+        } }
+    }
+    if (!('url' in image)) throw new Error('Scrapingdog 需要公网图片地址。')
+    const endpoint = new URL('https://api.scrapingdog.com/google_lens')
+    endpoint.search = new URLSearchParams({ api_key: cfg.apiKey, exact_matches: 'true',
+        url: 'https://lens.google.com/uploadbyurl?url=' + encodeURIComponent(image.url) }).toString()
+    const response = await ctx.http(endpoint, options).catch((error: unknown) => {
+        signal.throwIfAborted()
+        throw new Error(error instanceof Error ? error.message.replaceAll(encodeURIComponent(cfg.apiKey), '[redacted]').replaceAll(cfg.apiKey, '[redacted]') : 'Scrapingdog 连接失败。')
     })
+    const data = await response.json() as ScrapingdogResponse
+    if (!response.ok || data.error) throw new Error('Scrapingdog 查询失败，HTTP ' + response.status)
+    const result: ScrapingdogResultPayload = { provider: 'scrapingdog', imageUrl: input }
+    for (const key of ['exact_matches', 'visual_matches', 'lens_results'] as const) {
+        if (!Array.isArray(data[key])) continue
+        const matches = publicMatches(data[key].slice(0, cfg.maxResults), cfg.apiKey)
+        for (const item of matches) {
+            if (typeof item !== 'object' || !item?.thumbnail?.startsWith('data:')) continue
+            const thumbnail = /^data:(image\/[\w.+-]+);base64,(.+)$/i.exec(item.thumbnail)
+            delete item.thumbnail
+            if (!cfg.cacheService.cacheThumbnails || !thumbnail?.[1] || !thumbnail[2]) continue
+            try {
+                const file = await ctx.chatluna_storage.createTempFile(Buffer.from(thumbnail[2], 'base64'), 'thumbnail', {
+                    mimeType: thumbnail[1], expireHours: Math.max(1, Math.ceil(cfg.cacheService.ttlSeconds / 3600))
+                })
+                item.thumbnail = cfg.serverPath ? publicFile(cfg.serverPath, file.url) : 'storage://' + file.id
+            } catch { /* 来源网页在缩略图不可用时仍可返回。 */ }
+        }
+        result[key] = matches
+    }
+    return result
 }
 
 export function apply(ctx: Context, cfg: Config) {
-    const log = ctx.logger(name)
-    cfg.serverPath = trimTrailingSlash((cfg.serverPath || '').trim())
-    ;(ctx.model as any).extend(
-        CACHE_TABLE,
-        {
-            key: 'string',
-            payload: 'json',
-            createdAt: 'timestamp',
-            expiresAt: 'timestamp'
-        },
-        {
-            primary: 'key',
-            indexes: ['expiresAt']
-        }
-    )
-    const cache = new ReverseImageCacheService(ctx, cfg)
-
-    ctx.on('ready', async () => {
-        await cache.init()
-        if (!cfg.tool.enabled) {
-            return
-        }
-        if (!cfg.apiKey.trim()) {
-            log.warn('未配置 %s 服务提供商的 API Key，跳过注册 ChatLuna 工具。', cfg.provider)
-            return
-        }
-
-        const toolName = (cfg.tool.name || 'google_reverse_image_search').trim() || 'google_reverse_image_search'
-        const tool = new GoogleReverseImageTool(ctx, cfg, cache)
-        ctx.effect(() => ctx.chatluna.platform.registerTool(toolName, {
-            description: tool.description,
-            selector() {
-                return true
-            },
-            createTool() {
-                return new GoogleReverseImageTool(ctx, cfg, cache)
-            },
-            meta: {
-                source: 'extension',
-                group: 'google-reverse-image-search',
-                tags: ['google-reverse-image-search'],
-                defaultAvailability: {
-                    enabled: true,
-                    main: true,
-                    chatluna: true,
-                    characterScope: 'all'
+    if (!cfg.tool.enabled || !cfg.apiKey.trim()) return
+    ctx.model.extend(CACHE_TABLE, { key: 'string', payload: 'text', createdAt: 'timestamp', expiresAt: 'timestamp' },
+        { primary: 'key', indexes: [['expiresAt']] })
+    let nextCleanup = 0
+    ctx.tools.define(defineTool<{ imageUrl: string }>({
+        name: cfg.tool.name, description: cfg.tool.description,
+        args: Schema.object({ imageUrl: Schema.string().required().description('当前对话中图片的 ref（如 i123abc）或公网图片 URL。') }),
+        traits: { effect: 'read', parallel: true },
+        async run({ imageUrl }, call) {
+            call.signal.throwIfAborted()
+            const input = imageUrl.trim()
+            const image = await resolveImage(ctx, cfg, input, call.agent)
+            const key = createHash('sha256').update(JSON.stringify([2, cfg.provider, cfg.maxResults, cfg.serverPath,
+                cfg.cacheService.cacheThumbnails, image])).digest('hex')
+            const now = Date.now()
+            call.signal.throwIfAborted()
+            let result: OutputPayload | undefined
+            if (cfg.cacheService.enable) {
+                if (now >= nextCleanup) {
+                    await ctx.database.remove(CACHE_TABLE, { expiresAt: { $lte: new Date(now) } })
+                    nextCleanup = now + cfg.cacheService.cleanupIntervalSeconds * 1000
+                }
+                const [row] = await ctx.database.get(CACHE_TABLE, { key, expiresAt: { $gt: new Date(now) } })
+                if (row) {
+                    result = JSON.parse(row.payload) as OutputPayload
+                    if (result?.provider === 'scrapingdog') {
+                        const ids = new Set<string>()
+                        const names = new Set<string>()
+                        const prefix = cfg.serverPath.trim().replace(/\/+$/, '') + '/files/'
+                        for (const item of [...result.exact_matches || [], ...result.visual_matches || [], ...result.lens_results || []]) {
+                            if (item?.thumbnail?.startsWith('storage://')) ids.add(item.thumbnail.slice(10))
+                            else if (item?.thumbnail?.startsWith(prefix)) names.add(decodeURIComponent(item.thumbnail.slice(prefix.length)))
+                        }
+                        const filter = { expireAt: { $gt: Date.now() } }
+                        if ((ids.size && (await ctx.database.get('chatluna_files', { id: [...ids], ...filter }, ['id'])).length !== ids.size)
+                            || (names.size && (await ctx.database.get('chatluna_files', { name: [...names], ...filter }, ['name'])).length !== names.size)) {
+                            result = undefined
+                        }
+                    }
                 }
             }
-        }))
-    })
+            if (!result) {
+                result = await search(ctx, cfg, image, input, call.signal)
+                call.signal.throwIfAborted()
+                if (cfg.cacheService.enable && shouldCacheResult(result)) await ctx.database.upsert(CACHE_TABLE, [{
+                    key, payload: JSON.stringify(result), createdAt: new Date(now), expiresAt: new Date(now + cfg.cacheService.ttlSeconds * 1000)
+                }], ['key'])
+            } else if (cfg.debug) ctx.logger.info('以图搜图缓存命中。')
+            return { ...result, imageUrl: input, ...(cfg.customPrompt.trim() ? { instructions: cfg.customPrompt } : {}) }
+        }
+    }))
 }
-
-export * from './config'

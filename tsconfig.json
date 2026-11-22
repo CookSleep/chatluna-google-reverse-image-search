@@ -1,18 +1,13 @@
 {
-    "compilerOptions": {
-        "rootDir": "src",
-        "outDir": "lib",
-        "target": "es2022",
-        "emitDeclarationOnly": true,
-        "module": "esnext",
-        "declaration": true,
-        "composite": true,
-        "incremental": true,
-        "skipLibCheck": true,
-        "esModuleInterop": true,
-        "moduleResolution": "Bundler"
-    },
-    "include": [
-        "src"
-    ]
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib",
+    "composite": false,
+    "incremental": false,
+    "emitDeclarationOnly": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src"]
 }
