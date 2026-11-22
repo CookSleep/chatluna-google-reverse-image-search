@@ -9,6 +9,8 @@ import type {} from '@cordisjs/plugin-http'
 import type {} from '@cordisjs/plugin-database'
 import type { Config } from './config.js'
 
+import { downloadImage } from './download.js'
+
 export * from './config.js'
 export const inject = ['tools', 'http', 'model', 'database', 'chatluna_storage']
 const CACHE_TABLE = 'chatluna_reverse_image_v2_cache'
@@ -210,9 +212,10 @@ async function search(ctx: Context, cfg: Config, image: ImageInput, input: strin
         ...(cfg.proxyMode === 'system' ? {} : { proxyAgent: cfg.proxyMode === 'off' ? '' : cfg.proxyAddress || '' })
     }
     if (cfg.provider === 'google') {
+        const content = 'content' in image ? image.content : await downloadImage(ctx.http, image.url, options)
         const response = await ctx.http('https://vision.googleapis.com/v1/images:annotate', {
             ...options, method: 'POST', headers: { 'X-Goog-Api-Key': cfg.apiKey },
-            data: { requests: [{ image: 'content' in image ? image : { source: { imageUri: image.url } },
+            data: { requests: [{ image: { content },
                 features: [{ type: 'WEB_DETECTION', maxResults: cfg.maxResults }] }] }
         })
         const data = await response.json() as VisionResponse
@@ -288,14 +291,31 @@ export function apply(ctx: Context, cfg: Config) {
                         const ids = new Set<string>()
                         const names = new Set<string>()
                         const prefix = cfg.serverPath.trim().replace(/\/+$/, '') + '/files/'
-                        for (const item of [...result.exact_matches || [], ...result.visual_matches || [], ...result.lens_results || []]) {
-                            if (item?.thumbnail?.startsWith('storage://')) ids.add(item.thumbnail.slice(10))
-                            else if (item?.thumbnail?.startsWith(prefix)) names.add(decodeURIComponent(item.thumbnail.slice(prefix.length)))
+                        const items = [...result.exact_matches || [], ...result.visual_matches || [], ...result.lens_results || []]
+                        const local = new Map<typeof items[number], { key: string; byId: boolean }>()
+                        for (const item of items) {
+                            if (!item.thumbnail) continue
+                            if (item.thumbnail.startsWith('storage://')) {
+                                const key = item.thumbnail.slice(10)
+                                ids.add(key)
+                                local.set(item, { key, byId: true })
+                            } else if (item.thumbnail.startsWith(prefix)) {
+                                const key = decodeURIComponent(item.thumbnail.slice(prefix.length))
+                                names.add(key)
+                                local.set(item, { key, byId: false })
+                            }
                         }
                         const filter = { expireAt: { $gt: Date.now() } }
-                        if ((ids.size && (await ctx.database.get('chatluna_files', { id: [...ids], ...filter }, ['id'])).length !== ids.size)
-                            || (names.size && (await ctx.database.get('chatluna_files', { name: [...names], ...filter }, ['name'])).length !== names.size)) {
-                            result = undefined
+                        const liveIds = new Set(ids.size ? (await ctx.database.get('chatluna_files', { id: [...ids], ...filter }, ['id'])).map(row => row.id) : [])
+                        const liveNames = new Set(names.size ? (await ctx.database.get('chatluna_files', { name: [...names], ...filter }, ['name'])).map(row => row.name) : [])
+                        for (const [item, { key, byId }] of local) {
+                            if ((byId ? liveIds : liveNames).has(key)) continue
+                            if (item.image && isScrapingdogReachableUrl(item.image) && item.image !== item.thumbnail) {
+                                delete item.thumbnail
+                            } else {
+                                result = undefined
+                                break
+                            }
                         }
                     }
                 }

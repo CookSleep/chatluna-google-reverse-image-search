@@ -18,7 +18,7 @@
 
 ### 🔎 两种搜索服务
 - **Scrapingdog（默认）**：抓取 Google Lens 的结果，效果与 Google Lens 几乎一致；图片 URL 必须能被公网访问。
-- **Google Cloud Vision**：聊天附件以 Base64 提交，公网图片地址由 Google 读取，效果比 Google Lens 差一些。
+- **Google Cloud Vision**：读取本地聊天附件，或由实例下载给定的公网图片，再以 Base64 提交给 Google，效果比 Google Lens 差一些。
 
 ### 🧠 精简的结果
 - **Scrapingdog**：去掉 `related_searches`、`price`、`in_stock` 等与找出处无关的字段。

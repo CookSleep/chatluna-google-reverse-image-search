@@ -23,11 +23,21 @@ function fixture(provider, data, response) {
     }
     apply({
         tools: { define(value) { tool = value } }, model: { extend() {} }, chatluna_storage: storage,
-        http: async (url, options) => {
+        http: Object.assign(async (url, options) => {
             assert.equal(options.signal, call.signal)
             requests.push({ url: new URL(url), options })
             return Response.json(response)
-        }
+        }, {
+            resolveConfig() { return {} },
+            undici: { Agent: class {
+                request({ origin, path, headers }) {
+                    assert.equal(origin + path, 'https://1.1.1.1/input.png')
+                    assert.equal(headers.host, '1.1.1.1')
+                    return { statusCode: 200, headers: {}, body: [bytes] }
+                }
+                destroy() {}
+            } }
+        })
     }, Config({ provider, apiKey: 'fixture', serverPath: 'https://example.org', cacheService: { enable: false } }))
     return { requests, call, reference, tool }
 }
@@ -50,4 +60,11 @@ test('Scrapingdog 读取内联附件的公网文件链接，保留匹配结果',
     await assert.rejects(tool.run({ imageUrl: 'http://127.0.0.1/image' }, call), /公网/)
     await assert.rejects(tool.run({ imageUrl: reference }, { ...call, signal: AbortSignal.abort() }), { name: 'AbortError' })
     assert.equal(requests.length, 1)
+})
+
+test('Google 的公网输入由实例读取并作为图片内容提交', async () => {
+    const { reference, call, requests, tool } = fixture('google', { type: 'url', url: 'https://1.1.1.1/input.png' },
+        { responses: [{ webDetection: {} }] })
+    await tool.run({ imageUrl: reference }, call)
+    assert.deepEqual(requests[0].options.data.requests[0].image, { content: Buffer.from('png').toString('base64') })
 })

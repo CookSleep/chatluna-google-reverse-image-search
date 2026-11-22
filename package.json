@@ -1,7 +1,7 @@
 {
   "name": "chatluna-plugin-google-reverse-image-search",
   "description": "为 ChatLuna 提供 Google Reverse Image Search（Google Lens 以图搜图）工具，支持 Scrapingdog Google Lens API 与 Google Cloud Vision Detecting Web API",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "homepage": "https://github.com/CookSleep/chatluna-google-reverse-image-search",
   "repository": {
     "type": "git",
@@ -43,7 +43,8 @@
     "@chatluna/schema": "*",
     "@chatluna/tool": "*",
     "@chatluna/transform": "*",
-    "cordis": "*"
+    "cordis": "*",
+    "@chatluna/search": "*"
   },
   "engines": {
     "node": ">=24"
