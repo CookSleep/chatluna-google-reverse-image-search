@@ -58,4 +58,17 @@ jobs:
         with:
           name: npm-package
           path: release
-      - run: npm publish ./release/*.tgz --access public --provenance
+      - name: 发布新版本或核验已发布的压缩包
+        run: |
+          package=chatluna-plugin-google-reverse-image-search
+          version=${GITHUB_REF_NAME#v2-}
+          archive="./release/$package-$version.tgz"
+          status=$(curl --silent --show-error --output metadata.json --write-out '%{http_code}' "https://registry.npmjs.org/$package/$version")
+          case "$status" in
+            200)
+              curl --fail --silent --show-error "https://registry.npmjs.org/$package/-/$package-$version.tgz" --output published.tgz
+              cmp "$archive" published.tgz
+              ;;
+            404) npm publish "$archive" --access public --provenance ;;
+            *) echo "npm registry HTTP $status" >&2; exit 1 ;;
+          esac
